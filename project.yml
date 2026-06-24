@@ -1,4 +1,4 @@
-name: "20-20-20护眼"
+name: EyeCare20
 options:
   bundleIdPrefix: com.luludad
   deploymentTarget:
@@ -9,7 +9,7 @@ settings:
     CURRENT_PROJECT_VERSION: "1"
 
 targets:
-  "20-20-20护眼":
+  EyeCare20:
     type: application
     platform: iOS
     sources:

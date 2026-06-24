@@ -20,8 +20,8 @@ jobs:
       - name: Build (unsigned)
         run: |
           xcodebuild build \
-            -project "20-20-20护眼.xcodeproj" \
-            -scheme "20-20-20护眼" \
+            -project "EyeCare20.xcodeproj" \
+            -scheme "EyeCare20" \
             -sdk iphoneos \
             -configuration Release \
             -derivedDataPath build \
@@ -32,11 +32,11 @@ jobs:
       - name: Package .ipa
         run: |
           mkdir Payload
-          cp -r "build/Build/Products/Release-iphoneos/20-20-20护眼.app" Payload/
-          zip -r "20-20-20护眼.ipa" Payload/
+          cp -r "build/Build/Products/Release-iphoneos/EyeCare20.app" Payload/
+          zip -r "EyeCare20.ipa" Payload/
 
       - name: Upload .ipa
         uses: actions/upload-artifact@v4
         with:
-          name: 20-20-20护眼
-          path: 20-20-20护眼.ipa
+          name: EyeCare20
+          path: EyeCare20.ipa
