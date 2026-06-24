@@ -17,14 +17,13 @@ class TimerManager: ObservableObject {
     @Published var showOverlay = false
     @Published var healthTip = ""
     @Published var darkMode = false
-    @Published var screenFlash = false       // triggers green flash on rest start
-    @Published var showRestEndToast = false  // triggers "休息结束" toast
+    @Published var screenFlash = false
+    @Published var showRestEndToast = false
 
     var progress: Double {
         totalTime > 0 ? (timeRemaining / totalTime) : 1.0
     }
 
-    // MARK: - Constants
     private let healthTips = [
         "看看窗外远处，放松眼部肌肉",
         "闭眼休息，轻轻按摩眼眶",
@@ -38,13 +37,10 @@ class TimerManager: ObservableObject {
         "调整坐姿，保持脊柱挺直",
     ]
 
-    // MARK: - Wall-clock tracking
     private var deadline: Date?
     private var tickTimer: Timer?
     private var workMinutes: Int = 20
     private var restSeconds: Int = 20
-
-    // MARK: - UserDefaults keys
     private let defaults = UserDefaults.standard
 
     init() {
@@ -64,7 +60,7 @@ class TimerManager: ObservableObject {
         isRunning = true
         showOverlay = false
         saveTimerState()
-        scheduleNotification(title: "该休息了！", body: "看看 20 英尺外的远处，放松 20 秒", after: duration)
+        scheduleWorkCycleNotifications(workRemaining: duration)
         startTicking()
     }
 
@@ -73,19 +69,19 @@ class TimerManager: ObservableObject {
         isRunning = false
         stopTicking()
         saveTimerState()
-        cancelNotification()
+        cancelAllTimerNotifications()
     }
 
     func resume() {
         guard phase != .idle, !isRunning else { return }
-        guard let oldDeadline = deadline else { return }
-        // Recalculate deadline from remaining time
         deadline = Date().addingTimeInterval(timeRemaining)
         isRunning = true
         saveTimerState()
-        scheduleNotification(title: phase == .working ? "该休息了！" : "休息结束",
-                             body: phase == .working ? "看看 20 英尺外的远处" : "继续工作吧！",
-                             after: timeRemaining)
+        if phase == .working {
+            scheduleWorkCycleNotifications(workRemaining: timeRemaining)
+        } else {
+            scheduleRestEndNotification(after: timeRemaining)
+        }
         startTicking()
     }
 
@@ -97,7 +93,7 @@ class TimerManager: ObservableObject {
         totalTime = TimeInterval(workMinutes * 60)
         isRunning = false
         showOverlay = false
-        cancelNotification()
+        cancelAllTimerNotifications()
         clearTimerState()
     }
 
@@ -106,7 +102,6 @@ class TimerManager: ObservableObject {
         stopTicking()
         showOverlay = false
         saveDailyStats()
-        // Start next work
         let duration = TimeInterval(workMinutes * 60)
         deadline = Date().addingTimeInterval(duration)
         totalTime = duration
@@ -114,9 +109,8 @@ class TimerManager: ObservableObject {
         phase = .working
         isRunning = true
         saveTimerState()
-        scheduleNotification(title: "该休息了！", body: "看看 20 英尺外的远处，放松 20 秒", after: duration)
+        scheduleWorkCycleNotifications(workRemaining: duration)
         startTicking()
-        // Rest end toast
         showRestEndToast = true
         UINotificationFeedbackGenerator().notificationOccurred(.success)
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
@@ -157,13 +151,9 @@ class TimerManager: ObservableObject {
         }
         let now = Date()
         if savedDeadline > now {
-            // Phase still active
             timeRemaining = savedDeadline.timeIntervalSince(now)
-            if isRunning {
-                startTicking()
-            }
+            if isRunning { startTicking() }
         } else {
-            // Phase expired while away
             let overshoot = now.timeIntervalSince(savedDeadline)
             if phase == .working {
                 handleWorkExpiredInBackground(overshoot: overshoot)
@@ -177,12 +167,9 @@ class TimerManager: ObservableObject {
 
     private func handleWorkExpiredInBackground(overshoot: TimeInterval) {
         todayCycles += 1
-        // Check if rest also expired
         let restDuration = TimeInterval(restSeconds)
         if overshoot >= restDuration {
-            // Both work and rest expired
             saveDailyStats()
-            // Start new work
             let duration = TimeInterval(workMinutes * 60)
             deadline = Date().addingTimeInterval(duration)
             totalTime = duration
@@ -190,10 +177,9 @@ class TimerManager: ObservableObject {
             phase = .working
             isRunning = true
             saveTimerState()
-            scheduleNotification(title: "该休息了！", body: "看看 20 英尺外的远处", after: duration)
+            scheduleWorkCycleNotifications(workRemaining: duration)
             startTicking()
         } else {
-            // Rest still in progress
             let remaining = restDuration - overshoot
             deadline = Date().addingTimeInterval(remaining)
             totalTime = restDuration
@@ -203,14 +189,13 @@ class TimerManager: ObservableObject {
             healthTip = healthTips.randomElement() ?? ""
             isRunning = true
             saveTimerState()
-            scheduleNotification(title: "休息结束", body: "继续工作吧！", after: remaining)
+            scheduleRestEndNotification(after: remaining)
             startTicking()
         }
     }
 
     private func handleRestExpiredInBackground(overshoot: TimeInterval) {
         saveDailyStats()
-        // Start next work
         let duration = TimeInterval(workMinutes * 60)
         deadline = Date().addingTimeInterval(duration)
         totalTime = duration
@@ -219,7 +204,7 @@ class TimerManager: ObservableObject {
         showOverlay = false
         isRunning = true
         saveTimerState()
-        scheduleNotification(title: "该休息了！", body: "看看 20 英尺外的远处", after: duration)
+        scheduleWorkCycleNotifications(workRemaining: duration)
         startTicking()
     }
 
@@ -228,9 +213,7 @@ class TimerManager: ObservableObject {
         tickTimer = Timer.scheduledTimer(withTimeInterval: 0.2, repeats: true) { [weak self] _ in
             guard let self, let deadline = self.deadline else { return }
             let remaining = max(0, deadline.timeIntervalSinceNow)
-            DispatchQueue.main.async {
-                self.timeRemaining = remaining
-            }
+            DispatchQueue.main.async { self.timeRemaining = remaining }
             if remaining <= 0 {
                 DispatchQueue.main.async {
                     self.stopTicking()
@@ -240,10 +223,7 @@ class TimerManager: ObservableObject {
         }
     }
 
-    private func stopTicking() {
-        tickTimer?.invalidate()
-        tickTimer = nil
-    }
+    private func stopTicking() { tickTimer?.invalidate(); tickTimer = nil }
 
     private func completePhase() {
         if phase == .working {
@@ -259,10 +239,8 @@ class TimerManager: ObservableObject {
             isRunning = true
             saveDailyStats()
             saveTimerState()
-            cancelNotification()
-            scheduleNotification(title: "休息结束", body: "继续工作吧！", after: duration)
+            scheduleRestEndNotification(after: duration)
             startTicking()
-            // Strong alert: screen flash + warning haptic
             screenFlash = true
             UINotificationFeedbackGenerator().notificationOccurred(.warning)
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in
@@ -278,10 +256,8 @@ class TimerManager: ObservableObject {
             showOverlay = false
             isRunning = true
             saveTimerState()
-            cancelNotification()
-            scheduleNotification(title: "该休息了！", body: "看看 20 英尺外的远处", after: duration)
+            scheduleWorkCycleNotifications(workRemaining: duration)
             startTicking()
-            // Rest end alert: toast + haptic
             showRestEndToast = true
             UINotificationFeedbackGenerator().notificationOccurred(.success)
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
@@ -290,25 +266,67 @@ class TimerManager: ObservableObject {
         }
     }
 
-    // MARK: - Notifications
+    // MARK: - Notifications (dual: rest-start + rest-end)
 
     private func requestNotificationPermission() {
-        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { _, _ in }
+        UNUserNotificationCenter.current()
+            .requestAuthorization(options: [.alert, .sound, .badge]) { _, _ in }
     }
 
-    private func scheduleNotification(title: String, body: String, after duration: TimeInterval) {
+    /// Schedule both "rest start" and "rest end" notifications.
+    /// Call this when work begins or resumes.
+    private func scheduleWorkCycleNotifications(workRemaining: TimeInterval) {
+        let restDur = TimeInterval(restSeconds)
+        let startIn = max(1, workRemaining)
+        let endIn = max(1, workRemaining + restDur)
+
+        cancelAllTimerNotifications()
+
+        // Rest-start: "该休息了！"
+        let startContent = UNMutableNotificationContent()
+        startContent.title = "该休息了！"
+        startContent.body = "看远处 \(restSeconds) 秒，放松眼睛"
+        startContent.sound = UNNotificationSound(named: UNNotificationSoundName("alert.wav"))
+        let startReq = UNNotificationRequest(
+            identifier: "eye20-rest-start",
+            content: startContent,
+            trigger: UNTimeIntervalNotificationTrigger(timeInterval: startIn, repeats: false)
+        )
+        UNUserNotificationCenter.current().add(startReq)
+
+        // Rest-end: "休息结束"
+        let endContent = UNMutableNotificationContent()
+        endContent.title = "休息结束"
+        endContent.body = "继续工作吧！"
+        endContent.sound = UNNotificationSound(named: UNNotificationSoundName("complete.wav"))
+        let endReq = UNNotificationRequest(
+            identifier: "eye20-rest-end",
+            content: endContent,
+            trigger: UNTimeIntervalNotificationTrigger(timeInterval: endIn, repeats: false)
+        )
+        UNUserNotificationCenter.current().add(endReq)
+    }
+
+    /// Schedule only the rest-end notification (called when rest phase starts in-app).
+    private func scheduleRestEndNotification(after duration: TimeInterval) {
+        UNUserNotificationCenter.current()
+            .removePendingNotificationRequests(withIdentifiers: ["eye20-rest-end"])
+
         let content = UNMutableNotificationContent()
-        content.title = title
-        content.body = body
-        content.sound = .default
-
-        let trigger = UNTimeIntervalNotificationTrigger(timeInterval: max(1, duration), repeats: false)
-        let request = UNNotificationRequest(identifier: "eye20-timer", content: content, trigger: trigger)
-        UNUserNotificationCenter.current().add(request)
+        content.title = "休息结束"
+        content.body = "继续工作吧！"
+        content.sound = UNNotificationSound(named: UNNotificationSoundName("complete.caf"))
+        let req = UNNotificationRequest(
+            identifier: "eye20-rest-end",
+            content: content,
+            trigger: UNTimeIntervalNotificationTrigger(timeInterval: max(1, duration), repeats: false)
+        )
+        UNUserNotificationCenter.current().add(req)
     }
 
-    private func cancelNotification() {
-        UNUserNotificationCenter.current().removePendingNotificationRequests(withIdentifiers: ["eye20-timer"])
+    private func cancelAllTimerNotifications() {
+        UNUserNotificationCenter.current()
+            .removePendingNotificationRequests(withIdentifiers: ["eye20-rest-start", "eye20-rest-end"])
     }
 
     // MARK: - Persistence
@@ -318,40 +336,28 @@ class TimerManager: ObservableObject {
         if let data = try? encoder.encode(phase.rawValue) {
             defaults.set(data, forKey: "timerPhase")
         }
-        if let deadline {
-            defaults.set(deadline.timeIntervalSince1970, forKey: "timerDeadline")
-        }
+        if let deadline { defaults.set(deadline.timeIntervalSince1970, forKey: "timerDeadline") }
         defaults.set(isRunning, forKey: "timerIsRunning")
         defaults.set(showOverlay, forKey: "timerShowOverlay")
-        if !healthTip.isEmpty {
-            defaults.set(healthTip, forKey: "timerHealthTip")
-        }
-        defaults.synchronize()
+        if !healthTip.isEmpty { defaults.set(healthTip, forKey: "timerHealthTip") }
     }
 
     private func loadTimerState() {
         if let data = defaults.data(forKey: "timerPhase"),
-           let phaseRaw = try? JSONDecoder().decode(String.self, from: data),
-           let savedPhase = Phase(rawValue: phaseRaw) {
+           let raw = try? JSONDecoder().decode(String.self, from: data),
+           let savedPhase = Phase(rawValue: raw) {
             phase = savedPhase
         }
-        let savedDeadline = defaults.double(forKey: "timerDeadline")
-        if savedDeadline > 0 {
-            deadline = Date(timeIntervalSince1970: savedDeadline)
-        }
+        let sd = defaults.double(forKey: "timerDeadline")
+        if sd > 0 { deadline = Date(timeIntervalSince1970: sd) }
         isRunning = defaults.bool(forKey: "timerIsRunning")
         showOverlay = defaults.bool(forKey: "timerShowOverlay")
-        if let tip = defaults.string(forKey: "timerHealthTip") {
-            healthTip = tip
-        }
+        healthTip = defaults.string(forKey: "timerHealthTip") ?? ""
     }
 
     private func clearTimerState() {
-        defaults.removeObject(forKey: "timerPhase")
-        defaults.removeObject(forKey: "timerDeadline")
-        defaults.removeObject(forKey: "timerIsRunning")
-        defaults.removeObject(forKey: "timerShowOverlay")
-        defaults.removeObject(forKey: "timerHealthTip")
+        ["timerPhase","timerDeadline","timerIsRunning","timerShowOverlay","timerHealthTip"]
+            .forEach { defaults.removeObject(forKey: $0) }
     }
 
     private func loadSettings() {
@@ -360,18 +366,16 @@ class TimerManager: ObservableObject {
         restSeconds = defaults.integer(forKey: "restSeconds")
         if restSeconds == 0 { restSeconds = 20 }
         darkMode = defaults.bool(forKey: "darkMode")
-        // Restore timer state from last session
         loadTimerState()
         if phase != .idle, let deadline {
             let remaining = deadline.timeIntervalSince(Date())
             if remaining > 0 {
                 timeRemaining = remaining
-                totalTime = phase == .working ? TimeInterval(workMinutes * 60) : TimeInterval(restSeconds)
-                if isRunning {
-                    startTicking()
-                }
+                totalTime = phase == .working
+                    ? TimeInterval(workMinutes * 60)
+                    : TimeInterval(restSeconds)
+                if isRunning { startTicking() }
             } else {
-                // Timer expired while app was closed
                 reset()
             }
         } else {
@@ -381,16 +385,12 @@ class TimerManager: ObservableObject {
     }
 
     private func saveDailyStats() {
-        let key = todayKey
-        defaults.set(todayCycles, forKey: "cycles_\(key)")
+        defaults.set(todayCycles, forKey: "cycles_\(todayKey)")
     }
 
     private func loadDailyStats() {
-        let key = todayKey
-        let savedCycles = defaults.integer(forKey: "cycles_\(key)")
-        if savedCycles > todayCycles || phase == .idle {
-            todayCycles = savedCycles
-        }
+        let saved = defaults.integer(forKey: "cycles_\(todayKey)")
+        if saved > todayCycles || phase == .idle { todayCycles = saved }
     }
 
     private var todayKey: String {
