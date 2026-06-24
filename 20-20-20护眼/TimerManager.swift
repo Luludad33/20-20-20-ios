@@ -14,10 +14,11 @@ class TimerManager: ObservableObject {
     @Published var totalTime: TimeInterval = 1200
     @Published var isRunning = false
     @Published var todayCycles = 0
-    @Published var todayRestSec = 0
     @Published var showOverlay = false
     @Published var healthTip = ""
     @Published var darkMode = false
+    @Published var screenFlash = false       // triggers green flash on rest start
+    @Published var showRestEndToast = false  // triggers "休息结束" toast
 
     var progress: Double {
         totalTime > 0 ? (timeRemaining / totalTime) : 1.0
@@ -103,11 +104,6 @@ class TimerManager: ObservableObject {
     func skipRest() {
         guard phase == .resting else { return }
         stopTicking()
-        // Credit partial rest seconds
-        let elapsed = restSeconds - Int(timeRemaining)
-        if elapsed > 0 {
-            todayRestSec += elapsed
-        }
         showOverlay = false
         saveDailyStats()
         // Start next work
@@ -120,6 +116,12 @@ class TimerManager: ObservableObject {
         saveTimerState()
         scheduleNotification(title: "该休息了！", body: "看看 20 英尺外的远处，放松 20 秒", after: duration)
         startTicking()
+        // Rest end toast
+        showRestEndToast = true
+        UINotificationFeedbackGenerator().notificationOccurred(.success)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+            self?.showRestEndToast = false
+        }
     }
 
     func updateWorkMinutes(_ val: Int) {
@@ -179,7 +181,6 @@ class TimerManager: ObservableObject {
         let restDuration = TimeInterval(restSeconds)
         if overshoot >= restDuration {
             // Both work and rest expired
-            todayRestSec += restSeconds
             saveDailyStats()
             // Start new work
             let duration = TimeInterval(workMinutes * 60)
@@ -208,7 +209,6 @@ class TimerManager: ObservableObject {
     }
 
     private func handleRestExpiredInBackground(overshoot: TimeInterval) {
-        todayRestSec += Int(TimeInterval(restSeconds) - overshoot)
         saveDailyStats()
         // Start next work
         let duration = TimeInterval(workMinutes * 60)
@@ -262,8 +262,12 @@ class TimerManager: ObservableObject {
             cancelNotification()
             scheduleNotification(title: "休息结束", body: "继续工作吧！", after: duration)
             startTicking()
-            // Haptic feedback
-            UINotificationFeedbackGenerator().notificationOccurred(.success)
+            // Strong alert: screen flash + warning haptic
+            screenFlash = true
+            UINotificationFeedbackGenerator().notificationOccurred(.warning)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in
+                self?.screenFlash = false
+            }
         } else if phase == .resting {
             // REST -> WORK
             let duration = TimeInterval(workMinutes * 60)
@@ -277,7 +281,12 @@ class TimerManager: ObservableObject {
             cancelNotification()
             scheduleNotification(title: "该休息了！", body: "看看 20 英尺外的远处", after: duration)
             startTicking()
+            // Rest end alert: toast + haptic
+            showRestEndToast = true
             UINotificationFeedbackGenerator().notificationOccurred(.success)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+                self?.showRestEndToast = false
+            }
         }
     }
 
@@ -374,20 +383,13 @@ class TimerManager: ObservableObject {
     private func saveDailyStats() {
         let key = todayKey
         defaults.set(todayCycles, forKey: "cycles_\(key)")
-        defaults.set(todayRestSec, forKey: "restSec_\(key)")
     }
 
     private func loadDailyStats() {
         let key = todayKey
         let savedCycles = defaults.integer(forKey: "cycles_\(key)")
-        let savedRest = defaults.integer(forKey: "restSec_\(key)")
-        // Corner case: if timer ran while app was closed, we might have already
-        // incremented cycles from loadTimerState -> reset(). Don't overwrite.
         if savedCycles > todayCycles || phase == .idle {
             todayCycles = savedCycles
-        }
-        if savedRest > todayRestSec || phase == .idle {
-            todayRestSec = savedRest
         }
     }
 

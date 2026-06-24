@@ -2,7 +2,6 @@ import SwiftUI
 
 struct ContentView: View {
     @EnvironmentObject var tm: TimerManager
-    @State private var showSettings = false
 
     var body: some View {
         ZStack {
@@ -20,8 +19,39 @@ struct ContentView: View {
                 SettingsToggleView()
             }
 
+            // Screen flash on rest start
+            if tm.screenFlash {
+                Color.green.opacity(0.25)
+                    .ignoresSafeArea()
+                    .allowsHitTesting(false)
+                    .transition(.opacity)
+                    .animation(.easeOut(duration: 0.4), value: tm.screenFlash)
+            }
+
+            // Rest overlay
             if tm.showOverlay {
                 RestOverlayView()
+            }
+
+            // Rest end toast
+            if tm.showRestEndToast {
+                VStack {
+                    Spacer()
+                    HStack(spacing: 8) {
+                        Image(systemName: "checkmark.circle.fill")
+                            .foregroundColor(.green)
+                        Text("休息结束，继续工作")
+                            .font(.subheadline.weight(.medium))
+                    }
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 12)
+                    .background(.regularMaterial)
+                    .clipShape(.capsule)
+                    .shadow(radius: 8)
+                    .padding(.bottom, 100)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                }
+                .animation(.spring(duration: 0.4), value: tm.showRestEndToast)
             }
         }
         .preferredColorScheme(tm.darkMode ? .dark : .light)
@@ -168,9 +198,9 @@ struct StatsView: View {
 
     var body: some View {
         HStack(spacing: 0) {
-            StatItem(value: "\(tm.todayCycles)", label: "已完成轮数")
+            StatItem(value: "\(tm.todayCycles)", label: "今日已完成轮数")
             Divider().frame(height: 32).padding(.vertical, 8)
-            StatItem(value: "\(tm.todayRestSec)", label: "累计护眼秒数")
+            StatItem(value: "\(tm.todayCycles * tm.currentWorkMinutes)", label: "今日专注(分钟)")
         }
         .padding(.vertical, 14)
         .padding(.horizontal, 8)
@@ -313,7 +343,7 @@ struct RestOverlayView: View {
         }
         .opacity(opacity)
         .onAppear {
-            withAnimation(.easeOut(duration: 0.4)) { opacity = 1 }
+            withAnimation(.easeOut(duration: 0.15)) { opacity = 1 }
         }
     }
 }
