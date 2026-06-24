@@ -19,6 +19,7 @@ class TimerManager: ObservableObject {
     @Published var darkMode = false
     @Published var screenFlash = false
     @Published var showRestEndToast = false
+    @Published var scheduleCycleCount = 3
 
     var progress: Double {
         totalTime > 0 ? (timeRemaining / totalTime) : 1.0
@@ -60,7 +61,7 @@ class TimerManager: ObservableObject {
         isRunning = true
         showOverlay = false
         saveTimerState()
-        scheduleWorkCycleNotifications(workRemaining: duration)
+        scheduleNotificationChain()
         startTicking()
     }
 
@@ -77,11 +78,7 @@ class TimerManager: ObservableObject {
         deadline = Date().addingTimeInterval(timeRemaining)
         isRunning = true
         saveTimerState()
-        if phase == .working {
-            scheduleWorkCycleNotifications(workRemaining: timeRemaining)
-        } else {
-            scheduleRestEndNotification(after: timeRemaining)
-        }
+        scheduleNotificationChain()
         startTicking()
     }
 
@@ -109,7 +106,7 @@ class TimerManager: ObservableObject {
         phase = .working
         isRunning = true
         saveTimerState()
-        scheduleWorkCycleNotifications(workRemaining: duration)
+        scheduleNotificationChain()
         startTicking()
         showRestEndToast = true
         UINotificationFeedbackGenerator().notificationOccurred(.success)
@@ -130,6 +127,11 @@ class TimerManager: ObservableObject {
     func updateRestSeconds(_ val: Int) {
         restSeconds = max(5, min(300, val))
         defaults.set(restSeconds, forKey: "restSeconds")
+    }
+
+    func updateScheduleCycleCount(_ val: Int) {
+        scheduleCycleCount = max(1, min(10, val))
+        defaults.set(scheduleCycleCount, forKey: "scheduleCycleCount")
     }
 
     var currentWorkMinutes: Int { workMinutes }
@@ -177,7 +179,7 @@ class TimerManager: ObservableObject {
             phase = .working
             isRunning = true
             saveTimerState()
-            scheduleWorkCycleNotifications(workRemaining: duration)
+            scheduleNotificationChain()
             startTicking()
         } else {
             let remaining = restDuration - overshoot
@@ -189,7 +191,7 @@ class TimerManager: ObservableObject {
             healthTip = healthTips.randomElement() ?? ""
             isRunning = true
             saveTimerState()
-            scheduleRestEndNotification(after: remaining)
+            scheduleNotificationChain()
             startTicking()
         }
     }
@@ -204,7 +206,7 @@ class TimerManager: ObservableObject {
         showOverlay = false
         isRunning = true
         saveTimerState()
-        scheduleWorkCycleNotifications(workRemaining: duration)
+        scheduleNotificationChain()
         startTicking()
     }
 
@@ -239,7 +241,7 @@ class TimerManager: ObservableObject {
             isRunning = true
             saveDailyStats()
             saveTimerState()
-            scheduleRestEndNotification(after: duration)
+            scheduleNotificationChain()
             startTicking()
             screenFlash = true
             UINotificationFeedbackGenerator().notificationOccurred(.warning)
@@ -256,7 +258,7 @@ class TimerManager: ObservableObject {
             showOverlay = false
             isRunning = true
             saveTimerState()
-            scheduleWorkCycleNotifications(workRemaining: duration)
+            scheduleNotificationChain()
             startTicking()
             showRestEndToast = true
             UINotificationFeedbackGenerator().notificationOccurred(.success)
@@ -273,60 +275,66 @@ class TimerManager: ObservableObject {
             .requestAuthorization(options: [.alert, .sound, .badge]) { _, _ in }
     }
 
-    /// Schedule both "rest start" and "rest end" notifications.
-    /// Call this when work begins or resumes.
-    private func scheduleWorkCycleNotifications(workRemaining: TimeInterval) {
-        let restDur = TimeInterval(restSeconds)
-        let startIn = max(1, workRemaining)
-        let endIn = max(1, workRemaining + restDur)
-
+    /// Schedule chained notifications for the current and future cycles.
+    /// This enables auto-loop in the background without the app being opened.
+    private func scheduleNotificationChain() {
         cancelAllTimerNotifications()
 
-        // Rest-start: "该休息了！"
-        let startContent = UNMutableNotificationContent()
-        startContent.title = "该休息了！"
-        startContent.body = "看远处 \(restSeconds) 秒，放松眼睛"
-        startContent.sound = UNNotificationSound(named: UNNotificationSoundName("alert.wav"))
-        let startReq = UNNotificationRequest(
-            identifier: "eye20-rest-start",
-            content: startContent,
-            trigger: UNTimeIntervalNotificationTrigger(timeInterval: startIn, repeats: false)
-        )
-        UNUserNotificationCenter.current().add(startReq)
+        let work = TimeInterval(workMinutes * 60)
+        let rest = TimeInterval(restSeconds)
+        let cycle = work + rest
 
-        // Rest-end: "休息结束"
-        let endContent = UNMutableNotificationContent()
-        endContent.title = "休息结束"
-        endContent.body = "继续工作吧！"
-        endContent.sound = UNNotificationSound(named: UNNotificationSoundName("complete.wav"))
-        let endReq = UNNotificationRequest(
-            identifier: "eye20-rest-end",
-            content: endContent,
-            trigger: UNTimeIntervalNotificationTrigger(timeInterval: endIn, repeats: false)
-        )
-        UNUserNotificationCenter.current().add(endReq)
+        var offset: TimeInterval = 0
+
+        switch phase {
+        case .working:
+            offset = max(1, timeRemaining)
+            // Current work → rest
+            scheduleOne(id: "eye20-rest-start-0", title: "该休息了！",
+                        body: "看远处 \(restSeconds) 秒，放松眼睛", sound: "alert.wav", after: offset)
+            scheduleOne(id: "eye20-rest-end-0", title: "休息结束",
+                        body: "继续工作吧！", sound: "complete.wav", after: offset + rest)
+            offset += rest
+        case .resting:
+            offset = max(1, timeRemaining)
+            // Current rest end
+            scheduleOne(id: "eye20-rest-end-0", title: "休息结束",
+                        body: "继续工作吧！", sound: "complete.wav", after: offset)
+            offset += work
+        case .idle:
+            return
+        }
+
+        // Future cycles
+        for i in 1 ... scheduleCycleCount {
+            scheduleOne(id: "eye20-rest-start-\(i)", title: "该休息了！",
+                        body: "看远处 \(restSeconds) 秒，放松眼睛", sound: "alert.wav", after: offset)
+            scheduleOne(id: "eye20-rest-end-\(i)", title: "休息结束",
+                        body: "继续工作吧！", sound: "complete.wav", after: offset + rest)
+            offset += cycle
+        }
     }
 
-    /// Schedule only the rest-end notification (called when rest phase starts in-app).
-    private func scheduleRestEndNotification(after duration: TimeInterval) {
-        UNUserNotificationCenter.current()
-            .removePendingNotificationRequests(withIdentifiers: ["eye20-rest-end"])
-
+    private func scheduleOne(id: String, title: String, body: String, sound: String, after: TimeInterval) {
         let content = UNMutableNotificationContent()
-        content.title = "休息结束"
-        content.body = "继续工作吧！"
-        content.sound = UNNotificationSound(named: UNNotificationSoundName("complete.caf"))
+        content.title = title
+        content.body = body
+        content.sound = UNNotificationSound(named: UNNotificationSoundName(sound))
         let req = UNNotificationRequest(
-            identifier: "eye20-rest-end",
+            identifier: id,
             content: content,
-            trigger: UNTimeIntervalNotificationTrigger(timeInterval: max(1, duration), repeats: false)
+            trigger: UNTimeIntervalNotificationTrigger(timeInterval: after, repeats: false)
         )
         UNUserNotificationCenter.current().add(req)
     }
 
     private func cancelAllTimerNotifications() {
-        UNUserNotificationCenter.current()
-            .removePendingNotificationRequests(withIdentifiers: ["eye20-rest-start", "eye20-rest-end"])
+        var ids: [String] = []
+        for i in 0 ... 20 {
+            ids.append("eye20-rest-start-\(i)")
+            ids.append("eye20-rest-end-\(i)")
+        }
+        UNUserNotificationCenter.current().removePendingNotificationRequests(withIdentifiers: ids)
     }
 
     // MARK: - Persistence
@@ -366,6 +374,8 @@ class TimerManager: ObservableObject {
         restSeconds = defaults.integer(forKey: "restSeconds")
         if restSeconds == 0 { restSeconds = 20 }
         darkMode = defaults.bool(forKey: "darkMode")
+        scheduleCycleCount = defaults.integer(forKey: "scheduleCycleCount")
+        if scheduleCycleCount == 0 { scheduleCycleCount = 3 }
         loadTimerState()
         if phase != .idle, let deadline {
             let remaining = deadline.timeIntervalSince(Date())
