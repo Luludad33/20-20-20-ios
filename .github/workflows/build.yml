@@ -1,0 +1,42 @@
+name: Build iOS App
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        run: xcodegen generate --project .
+
+      - name: Build (unsigned)
+        run: |
+          xcodebuild build \
+            -project "20-20-20护眼.xcodeproj" \
+            -scheme "20-20-20护眼" \
+            -sdk iphoneos \
+            -configuration Release \
+            -derivedDataPath build \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO
+
+      - name: Package .ipa
+        run: |
+          mkdir Payload
+          cp -r "build/Build/Products/Release-iphoneos/20-20-20护眼.app" Payload/
+          zip -r "20-20-20护眼.ipa" Payload/
+
+      - name: Upload .ipa
+        uses: actions/upload-artifact@v4
+        with:
+          name: 20-20-20护眼
+          path: 20-20-20护眼.ipa
