@@ -19,7 +19,7 @@ class TimerManager: ObservableObject {
     @Published var darkMode = false
     @Published var screenFlash = false
     @Published var showRestEndToast = false
-    @Published var scheduleCycleCount = 3
+    @Published var scheduleCycleCount = 15
 
     var progress: Double {
         totalTime > 0 ? (timeRemaining / totalTime) : 1.0
@@ -130,7 +130,7 @@ class TimerManager: ObservableObject {
     }
 
     func updateScheduleCycleCount(_ val: Int) {
-        scheduleCycleCount = max(1, min(10, val))
+        scheduleCycleCount = max(1, min(31, val))
         defaults.set(scheduleCycleCount, forKey: "scheduleCycleCount")
     }
 
@@ -147,6 +147,7 @@ class TimerManager: ObservableObject {
     }
 
     func returnedToForeground() {
+        loadDailyStats()
         guard let savedDeadline = deadline, phase != .idle else {
             loadDailyStats()
             return
@@ -294,7 +295,7 @@ class TimerManager: ObservableObject {
                         body: "看远处 \(restSeconds) 秒，放松眼睛", sound: "alert.wav", after: offset)
             scheduleOne(id: "eye20-rest-end-0", title: "休息结束",
                         body: "继续工作吧！", sound: "complete.wav", after: offset + rest)
-            offset += rest
+            offset += cycle
         case .resting:
             offset = max(1, timeRemaining)
             // Current rest end
@@ -330,7 +331,7 @@ class TimerManager: ObservableObject {
 
     private func cancelAllTimerNotifications() {
         var ids: [String] = []
-        for i in 0 ... 20 {
+        for i in 0 ... 31 {
             ids.append("eye20-rest-start-\(i)")
             ids.append("eye20-rest-end-\(i)")
         }
@@ -375,7 +376,7 @@ class TimerManager: ObservableObject {
         if restSeconds == 0 { restSeconds = 20 }
         darkMode = defaults.bool(forKey: "darkMode")
         scheduleCycleCount = defaults.integer(forKey: "scheduleCycleCount")
-        if scheduleCycleCount == 0 { scheduleCycleCount = 3 }
+        if scheduleCycleCount == 0 { scheduleCycleCount = 15 }
         loadTimerState()
         if phase != .idle, let deadline {
             let remaining = deadline.timeIntervalSince(Date())
@@ -399,8 +400,7 @@ class TimerManager: ObservableObject {
     }
 
     private func loadDailyStats() {
-        let saved = defaults.integer(forKey: "cycles_\(todayKey)")
-        if saved > todayCycles || phase == .idle { todayCycles = saved }
+        todayCycles = defaults.integer(forKey: "cycles_\(todayKey)")
     }
 
     private var todayKey: String {

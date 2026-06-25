@@ -279,7 +279,7 @@ struct SettingsToggleView: View {
                             get: { tm.scheduleCycleCount },
                             set: { tm.updateScheduleCycleCount($0) }
                         )) {
-                            ForEach(1...10, id: \.self) { i in
+                            ForEach(1...31, id: \.self) { i in
                                 Text("\(i) 轮").tag(i)
                             }
                         }
