@@ -200,7 +200,7 @@ struct StatsView: View {
         HStack(spacing: 0) {
             StatItem(value: "\(tm.todayCycles)", label: "今日已完成轮数")
             Divider().frame(height: 32).padding(.vertical, 8)
-            StatItem(value: "\(tm.todayCycles * tm.currentWorkMinutes)", label: "今日专注(分钟)")
+            StatItem(value: "\(Int(tm.todayFocusSeconds / 60))", label: "今日专注(分钟)")
         }
         .padding(.vertical, 14)
         .padding(.horizontal, 8)

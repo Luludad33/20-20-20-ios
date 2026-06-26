@@ -14,6 +14,7 @@ class TimerManager: ObservableObject {
     @Published var totalTime: TimeInterval = 1200
     @Published var isRunning = false
     @Published var todayCycles = 0
+    @Published var todayFocusSeconds: TimeInterval = 0
     @Published var showOverlay = false
     @Published var healthTip = ""
     @Published var darkMode = false
@@ -230,6 +231,7 @@ class TimerManager: ObservableObject {
         if phase == .working {
             // Work ended → 1 cycle completed. Count it.
             todayCycles += 1
+            todayFocusSeconds += work
 
             if t < rest {
                 // Still inside the rest period
@@ -260,6 +262,7 @@ class TimerManager: ObservableObject {
         if t >= work {
             // A work cycle completed
             todayCycles += 1
+            todayFocusSeconds += work
             t -= work  // time into rest
 
             if t < rest {
@@ -284,6 +287,7 @@ class TimerManager: ObservableObject {
             let fullCycles = Int(t / cycle)
             if fullCycles > 0 {
                 todayCycles += fullCycles
+                todayFocusSeconds += work * Double(fullCycles)
                 t -= Double(fullCycles) * cycle
             }
             // t < cycle now, starting from a work boundary
@@ -337,6 +341,7 @@ class TimerManager: ObservableObject {
         if phase == .working {
             // WORK -> REST
             todayCycles += 1
+            todayFocusSeconds += TimeInterval(workMinutes * 60)
             let duration = TimeInterval(restSeconds)
             deadline = Date().addingTimeInterval(duration)
             totalTime = duration
@@ -506,10 +511,12 @@ class TimerManager: ObservableObject {
 
     private func saveDailyStats() {
         defaults.set(todayCycles, forKey: "cycles_\(todayKey)")
+        defaults.set(todayFocusSeconds, forKey: "focus_\(todayKey)")
     }
 
     private func loadDailyStats() {
         todayCycles = defaults.integer(forKey: "cycles_\(todayKey)")
+        todayFocusSeconds = defaults.double(forKey: "focus_\(todayKey)")
     }
 
     private var todayKey: String {
