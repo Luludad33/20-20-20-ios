@@ -19,7 +19,6 @@ class TimerManager: ObservableObject {
     @Published var darkMode = false
     @Published var screenFlash = false
     @Published var showRestEndToast = false
-    @Published var scheduleCycleCount = 15
 
     var progress: Double {
         totalTime > 0 ? (timeRemaining / totalTime) : 1.0
@@ -42,12 +41,50 @@ class TimerManager: ObservableObject {
     private var tickTimer: Timer?
     private var workMinutes: Int = 20
     private var restSeconds: Int = 20
+    private var lastActiveDate: Date?
     private let defaults = UserDefaults.standard
 
     init() {
         requestNotificationPermission()
         loadSettings()
         loadDailyStats()
+        // If deadline is already past at launch, recover state
+        if phase != .idle, let deadline, deadline < Date() {
+            recoverFromBackground()
+        }
+    }
+
+    // MARK: - Lifecycle (called from App.swift)
+
+    func handleScenePhaseChange(to newPhase: ScenePhase) {
+        switch newPhase {
+        case .active:
+            if phase != .idle {
+                if let deadline, deadline < Date() {
+                    // Deadline passed while away — recover full state
+                    recoverFromBackground()
+                } else if isRunning {
+                    // Still within current phase — resume ticking
+                    startTicking()
+                }
+                scheduleNextNotifications()
+            }
+            lastActiveDate = Date()
+
+        case .background:
+            lastActiveDate = Date()
+            saveLastActiveDate()
+            if phase != .idle {
+                saveTimerState()
+                saveDailyStats()
+            }
+            stopTicking()
+
+        case .inactive:
+            break
+        @unknown default:
+            break
+        }
     }
 
     // MARK: - Public API
@@ -60,8 +97,10 @@ class TimerManager: ObservableObject {
         phase = .working
         isRunning = true
         showOverlay = false
+        lastActiveDate = Date()
+        saveLastActiveDate()
         saveTimerState()
-        scheduleNotificationChain()
+        scheduleNextNotifications()
         startTicking()
     }
 
@@ -78,7 +117,7 @@ class TimerManager: ObservableObject {
         deadline = Date().addingTimeInterval(timeRemaining)
         isRunning = true
         saveTimerState()
-        scheduleNotificationChain()
+        scheduleNextNotifications()
         startTicking()
     }
 
@@ -90,6 +129,8 @@ class TimerManager: ObservableObject {
         totalTime = TimeInterval(workMinutes * 60)
         isRunning = false
         showOverlay = false
+        lastActiveDate = Date()
+        saveLastActiveDate()
         cancelAllTimerNotifications()
         clearTimerState()
     }
@@ -106,7 +147,7 @@ class TimerManager: ObservableObject {
         phase = .working
         isRunning = true
         saveTimerState()
-        scheduleNotificationChain()
+        scheduleNextNotifications()
         startTicking()
         showRestEndToast = true
         UINotificationFeedbackGenerator().notificationOccurred(.success)
@@ -129,87 +170,101 @@ class TimerManager: ObservableObject {
         defaults.set(restSeconds, forKey: "restSeconds")
     }
 
-    func updateScheduleCycleCount(_ val: Int) {
-        scheduleCycleCount = max(1, min(31, val))
-        defaults.set(scheduleCycleCount, forKey: "scheduleCycleCount")
-    }
-
     var currentWorkMinutes: Int { workMinutes }
     var currentRestSeconds: Int { restSeconds }
 
-    // MARK: - Background / Foreground
+    // MARK: - Background recovery
 
-    func enteredBackground() {
-        stopTicking()
-        if phase != .idle {
-            saveTimerState()
-        }
-    }
-
-    func returnedToForeground() {
-        loadDailyStats()
-        guard let savedDeadline = deadline, phase != .idle else {
-            loadDailyStats()
+    /// Recover app state after being in background.
+    /// Calculates elapsed time since `lastActiveDate` and advances through
+    /// completed work/rest cycles, so the internal state is always correct
+    /// regardless of how long the app was away.
+    private func recoverFromBackground() {
+        guard let savedDeadline = deadline, let lastActive = lastActiveDate, lastActive < Date() else {
+            // No reference point — if deadline is past, reset safely
+            if let deadline, deadline < Date() { reset() }
             return
         }
+
         let now = Date()
-        if savedDeadline > now {
-            timeRemaining = savedDeadline.timeIntervalSince(now)
-            if isRunning { startTicking() }
-        } else {
-            let overshoot = now.timeIntervalSince(savedDeadline)
-            if phase == .working {
-                handleWorkExpiredInBackground(overshoot: overshoot)
-            } else {
-                handleRestExpiredInBackground(overshoot: overshoot)
-            }
+        let work = TimeInterval(workMinutes * 60)
+        let rest = TimeInterval(restSeconds)
+        let cycle = work + rest
+
+        // How much time passed since we were last active
+        let elapsed = now.timeIntervalSince(lastActive)
+
+        // How much time was remaining in the current phase at lastActive
+        let remainingAtLastActive = max(0, savedDeadline.timeIntervalSince(lastActive))
+
+        if elapsed < remainingAtLastActive {
+            // Still in the same phase
+            timeRemaining = remainingAtLastActive - elapsed
+            totalTime = phase == .working ? work : rest
+            return
         }
-    }
 
-    // MARK: - Private
+        // Current phase ended while we were away
+        var t = elapsed - remainingAtLastActive  // time since phase ended
 
-    private func handleWorkExpiredInBackground(overshoot: TimeInterval) {
-        todayCycles += 1
-        let restDuration = TimeInterval(restSeconds)
-        if overshoot >= restDuration {
-            saveDailyStats()
-            let duration = TimeInterval(workMinutes * 60)
-            deadline = Date().addingTimeInterval(duration)
-            totalTime = duration
-            timeRemaining = duration
-            phase = .working
-            isRunning = true
-            saveTimerState()
-            scheduleNotificationChain()
-            startTicking()
+        if phase == .working {
+            // Work ended → 1 cycle completed
+            todayCycles += 1
+
+            if t < rest {
+                // Still inside the rest period
+                let remaining = rest - t
+                phase = .resting
+                deadline = Date().addingTimeInterval(remaining)
+                timeRemaining = remaining
+                totalTime = rest
+                showOverlay = true
+                healthTip = healthTips.randomElement() ?? ""
+                isRunning = true
+                saveTimerState()
+                saveDailyStats()
+                return
+            }
+            t -= rest
         } else {
-            let remaining = restDuration - overshoot
-            deadline = Date().addingTimeInterval(remaining)
-            totalTime = restDuration
-            timeRemaining = remaining
+            // Rest ended (was .resting) → 1 cycle completed
+            todayCycles += 1
+        }
+
+        // Advance through any full cycles that elapsed
+        let fullCycles = Int(t / cycle)
+        if fullCycles > 0 {
+            todayCycles += fullCycles
+            t -= Double(fullCycles) * cycle
+        }
+
+        // Now t < cycle — determine current phase
+        if t < work {
+            // In work block
+            phase = .working
+            timeRemaining = work - t
+            totalTime = work
+            showOverlay = false
+        } else {
+            // In rest block
+            t -= work
             phase = .resting
+            timeRemaining = rest - t
+            totalTime = rest
             showOverlay = true
             healthTip = healthTips.randomElement() ?? ""
-            isRunning = true
-            saveTimerState()
-            scheduleNotificationChain()
-            startTicking()
         }
-    }
 
-    private func handleRestExpiredInBackground(overshoot: TimeInterval) {
-        saveDailyStats()
-        let duration = TimeInterval(workMinutes * 60)
-        deadline = Date().addingTimeInterval(duration)
-        totalTime = duration
-        timeRemaining = duration
-        phase = .working
-        showOverlay = false
+        deadline = Date().addingTimeInterval(timeRemaining)
         isRunning = true
         saveTimerState()
-        scheduleNotificationChain()
-        startTicking()
+        saveDailyStats()
+        // Prevent double-advance if recoverFromBackground is called again
+        lastActiveDate = Date()
+        saveLastActiveDate()
     }
+
+    // MARK: - Timer
 
     private func startTicking() {
         stopTicking()
@@ -242,7 +297,7 @@ class TimerManager: ObservableObject {
             isRunning = true
             saveDailyStats()
             saveTimerState()
-            scheduleNotificationChain()
+            scheduleNextNotifications()
             startTicking()
             screenFlash = true
             UINotificationFeedbackGenerator().notificationOccurred(.warning)
@@ -259,7 +314,7 @@ class TimerManager: ObservableObject {
             showOverlay = false
             isRunning = true
             saveTimerState()
-            scheduleNotificationChain()
+            scheduleNextNotifications()
             startTicking()
             showRestEndToast = true
             UINotificationFeedbackGenerator().notificationOccurred(.success)
@@ -269,50 +324,44 @@ class TimerManager: ObservableObject {
         }
     }
 
-    // MARK: - Notifications (dual: rest-start + rest-end)
+    // MARK: - Notifications
 
     private func requestNotificationPermission() {
         UNUserNotificationCenter.current()
             .requestAuthorization(options: [.alert, .sound, .badge]) { _, _ in }
     }
 
-    /// Schedule chained notifications for the current and future cycles.
-    /// This enables auto-loop in the background without the app being opened.
-    private func scheduleNotificationChain() {
+    /// Schedule only the NEXT pair of notifications (single cycle).
+    /// No chain — the system fires these at the right absolute time,
+    /// and on next foreground we recalculate from lastActiveDate.
+    private func scheduleNextNotifications() {
         cancelAllTimerNotifications()
 
-        let work = TimeInterval(workMinutes * 60)
-        let rest = TimeInterval(restSeconds)
-        let cycle = work + rest
-
-        var offset: TimeInterval = 0
+        guard let deadline, deadline > Date() else { return }
+        let now = Date()
 
         switch phase {
         case .working:
-            offset = max(1, timeRemaining)
-            // Current work → rest
-            scheduleOne(id: "eye20-rest-start-0", title: "该休息了！",
-                        body: "看远处 \(restSeconds) 秒，放松眼睛", sound: "alert.wav", after: offset)
-            scheduleOne(id: "eye20-rest-end-0", title: "休息结束",
-                        body: "继续工作吧！", sound: "complete.wav", after: offset + rest)
-            offset += cycle
-        case .resting:
-            offset = max(1, timeRemaining)
-            // Current rest end
-            scheduleOne(id: "eye20-rest-end-0", title: "休息结束",
-                        body: "继续工作吧！", sound: "complete.wav", after: offset)
-            offset += work
-        case .idle:
-            return
-        }
+            let workRemaining = max(1, deadline.timeIntervalSince(now))
+            let restDur = TimeInterval(restSeconds)
+            scheduleOne(id: "eye20-rest-start",
+                        title: "该休息了！",
+                        body: "看远处 \(restSeconds) 秒，放松眼睛",
+                        sound: "alert.wav", after: workRemaining)
+            scheduleOne(id: "eye20-rest-end",
+                        title: "休息结束",
+                        body: "继续工作吧！第 \(todayCycles + 1) 轮完成",
+                        sound: "complete.wav", after: workRemaining + restDur)
 
-        // Future cycles
-        for i in 1 ... scheduleCycleCount {
-            scheduleOne(id: "eye20-rest-start-\(i)", title: "该休息了！",
-                        body: "看远处 \(restSeconds) 秒，放松眼睛", sound: "alert.wav", after: offset)
-            scheduleOne(id: "eye20-rest-end-\(i)", title: "休息结束",
-                        body: "继续工作吧！", sound: "complete.wav", after: offset + rest)
-            offset += cycle
+        case .resting:
+            let restRemaining = max(1, deadline.timeIntervalSince(now))
+            scheduleOne(id: "eye20-rest-end",
+                        title: "休息结束",
+                        body: "继续工作吧！第 \(todayCycles) 轮完成",
+                        sound: "complete.wav", after: restRemaining)
+
+        case .idle:
+            break
         }
     }
 
@@ -330,12 +379,9 @@ class TimerManager: ObservableObject {
     }
 
     private func cancelAllTimerNotifications() {
-        var ids: [String] = []
-        for i in 0 ... 31 {
-            ids.append("eye20-rest-start-\(i)")
-            ids.append("eye20-rest-end-\(i)")
-        }
-        UNUserNotificationCenter.current().removePendingNotificationRequests(withIdentifiers: ids)
+        UNUserNotificationCenter.current()
+            .removePendingNotificationRequests(
+                withIdentifiers: ["eye20-rest-start", "eye20-rest-end"])
     }
 
     // MARK: - Persistence
@@ -369,15 +415,29 @@ class TimerManager: ObservableObject {
             .forEach { defaults.removeObject(forKey: $0) }
     }
 
+    private func saveLastActiveDate() {
+        if let date = lastActiveDate {
+            defaults.set(date.timeIntervalSince1970, forKey: "lastActiveDate")
+        }
+    }
+
+    private func loadLastActiveDate() {
+        let ts = defaults.double(forKey: "lastActiveDate")
+        if ts > 0 {
+            lastActiveDate = Date(timeIntervalSince1970: ts)
+        }
+    }
+
     private func loadSettings() {
         workMinutes = defaults.integer(forKey: "workMinutes")
         if workMinutes == 0 { workMinutes = 20 }
         restSeconds = defaults.integer(forKey: "restSeconds")
         if restSeconds == 0 { restSeconds = 20 }
         darkMode = defaults.bool(forKey: "darkMode")
-        scheduleCycleCount = defaults.integer(forKey: "scheduleCycleCount")
-        if scheduleCycleCount == 0 { scheduleCycleCount = 15 }
+
         loadTimerState()
+        loadLastActiveDate()
+
         if phase != .idle, let deadline {
             let remaining = deadline.timeIntervalSince(Date())
             if remaining > 0 {
@@ -386,9 +446,8 @@ class TimerManager: ObservableObject {
                     ? TimeInterval(workMinutes * 60)
                     : TimeInterval(restSeconds)
                 if isRunning { startTicking() }
-            } else {
-                reset()
             }
+            // Deadline ≤ 0 → handled by init() calling recoverFromBackground()
         } else {
             timeRemaining = TimeInterval(workMinutes * 60)
             totalTime = TimeInterval(workMinutes * 60)

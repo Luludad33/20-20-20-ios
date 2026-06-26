@@ -273,18 +273,6 @@ struct SettingsToggleView: View {
                         }
                         .pickerStyle(.menu)
                     }
-
-                    SettingsRow(label: "后台循环周期") {
-                        Picker("", selection: Binding(
-                            get: { tm.scheduleCycleCount },
-                            set: { tm.updateScheduleCycleCount($0) }
-                        )) {
-                            ForEach(1...31, id: \.self) { i in
-                                Text("\(i) 轮").tag(i)
-                            }
-                        }
-                        .pickerStyle(.menu)
-                    }
                 }
                 .padding(16)
                 .background(.regularMaterial, in: .rect(cornerRadius: 16))
