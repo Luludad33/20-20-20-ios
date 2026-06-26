@@ -64,7 +64,7 @@ class TimerManager: ObservableObject {
                 if let deadline, deadline < Date() {
                     // Deadline passed while away — recover full state
                     recoverFromBackground()
-                } else if isRunning {
+                } else if let deadline, isRunning {
                     // Still within current phase — correct remaining time & resume
                     timeRemaining = max(0, deadline.timeIntervalSince(Date()))
                     totalTime = phase == .working
