@@ -35,7 +35,7 @@ CI builds run via GitHub Actions (`.github/workflows/build.yml`) on `macos-lates
 
 ## Project structure
 
-```
+```text
 project.yml          — XcodeGen project spec (do NOT commit .xcodeproj)
 gen_sounds.js        — Node.js script that generates alert.wav / complete.wav
 20-20-20护眼/
