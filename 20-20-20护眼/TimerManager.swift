@@ -1,4 +1,4 @@
-import Foundation
+﻿import Foundation
 import UserNotifications
 import SwiftUI
 
@@ -21,21 +21,26 @@ class TimerManager: ObservableObject {
     @Published var screenFlash = false
     @Published var showRestEndToast = false
 
+    // MARK: - Session tracking
+    @Published var sessionCompleted = false
+    @Published var maxCycles: Int = 3 { didSet { defaults.set(maxCycles, forKey: "maxCycles") } }
+    @Published var todayCompletedSessions = 0
+
     var progress: Double {
         totalTime > 0 ? (timeRemaining / totalTime) : 1.0
     }
 
     private let healthTips = [
-        "看看窗外远处，放松眼部肌�?,
-        "闭眼休息，轻轻按摩眼�?,
-        "做几个深呼吸，放松身�?,
-        "转动眼球，上下左右各看几�?,
-        "伸展手臂和肩膀，缓解久坐疲�?,
-        "看远处绿色植物，对眼睛有�?,
-        "眨眼几次，保持眼睛湿�?,
+        "看看窗外远处，放松眼部肌肉",
+        "闭眼休息，轻轻按摩眼眶",
+        "做几个深呼吸，放松身心",
+        "转动眼球，上下左右各看几次",
+        "伸展手臂和肩膀，缓解久坐疲劳",
+        "看远处绿色植物，对眼睛有好处",
+        "眨眼几次，保持眼睛湿润",
         "远眺时尝试聚焦在不同距离的物体上",
-        "站起来活动一下，喝口�?,
-        "调整坐姿，保持脊柱挺�?,
+        "站起来活动一下，喝口水",
+        "调整坐姿，保持脊柱挺直",
     ]
 
     private var deadline: Date?
@@ -49,13 +54,12 @@ class TimerManager: ObservableObject {
         requestNotificationPermission()
         loadSettings()
         loadDailyStats()
-        // If deadline is already past at launch, recover state
         if phase != .idle, let deadline, deadline < Date() {
             recoverFromBackground()
         }
     }
 
-    // MARK: - Lifecycle (called from App.swift)
+    // MARK: - Lifecycle
 
     func handleScenePhaseChange(to newPhase: ScenePhase) {
         switch newPhase {
@@ -63,10 +67,8 @@ class TimerManager: ObservableObject {
             loadDailyStats()
             if phase != .idle {
                 if let deadline, deadline < Date() {
-                    // Deadline passed while away �?recover full state
                     recoverFromBackground()
                 } else if let deadline, isRunning {
-                    // Still within current phase �?correct remaining time & resume
                     timeRemaining = max(0, deadline.timeIntervalSince(Date()))
                     totalTime = phase == .working
                         ? TimeInterval(workMinutes * 60)
@@ -74,7 +76,6 @@ class TimerManager: ObservableObject {
                     startTicking()
                     scheduleNextNotifications()
                 }
-                // if isRunning == false (paused): do nothing, notifications stay cancelled
             }
             lastActiveDate = Date()
 
@@ -97,6 +98,7 @@ class TimerManager: ObservableObject {
     // MARK: - Public API
 
     func startWorking() {
+        sessionCompleted = false
         let duration = TimeInterval(workMinutes * 60)
         deadline = Date().addingTimeInterval(duration)
         totalTime = duration
@@ -140,6 +142,7 @@ class TimerManager: ObservableObject {
         showOverlay = false
         screenFlash = false
         showRestEndToast = false
+        sessionCompleted = false
         lastActiveDate = Date()
         saveLastActiveDate()
         cancelAllTimerNotifications()
@@ -186,25 +189,31 @@ class TimerManager: ObservableObject {
         }
     }
 
+    func updateMaxCycles(_ val: Int) {
+        maxCycles = max(1, min(20, val))
+    }
+
+    func resetForNewSession() {
+        todayCompletedSessions += 1
+        todayCycles = 0
+        todayFocusSeconds = 0
+        sessionCompleted = false
+        saveDailyStats()
+        reset()
+    }
+
     var currentWorkMinutes: Int { workMinutes }
     var currentRestSeconds: Int { restSeconds }
 
     // MARK: - Background recovery
 
-    /// Recover app state after being in background.
-    /// Calculates elapsed time since `lastActiveDate` and advances through
-    /// completed work/rest cycles, so the internal state is always correct
-    /// regardless of how long the app was away.
     private func recoverFromBackground() {
-        // If lastActiveDate is nil (e.g. first launch after app upgrade),
-        // use deadline as a reasonable proxy.
         if lastActiveDate == nil, let d = deadline, d < Date() {
             lastActiveDate = d
             saveLastActiveDate()
         }
 
         guard let savedDeadline = deadline, let lastActive = lastActiveDate, lastActive < Date() else {
-            // No reference point �?if deadline is past, reset safely
             if let deadline, deadline < Date() { reset() }
             return
         }
@@ -214,14 +223,10 @@ class TimerManager: ObservableObject {
         let rest = TimeInterval(restSeconds)
         let cycle = work + rest
 
-        // How much time passed since we were last active
         let elapsed = now.timeIntervalSince(lastActive)
-
-        // How much time was remaining in the current phase at lastActive
         let remainingAtLastActive = max(0, savedDeadline.timeIntervalSince(lastActive))
 
         if elapsed < remainingAtLastActive {
-            // Still in the same phase
             timeRemaining = remainingAtLastActive - elapsed
             totalTime = phase == .working ? work : rest
             lastActiveDate = Date()
@@ -231,16 +236,13 @@ class TimerManager: ObservableObject {
             return
         }
 
-        // Current phase ended while we were away
-        var t = elapsed - remainingAtLastActive  // time since phase ended
+        var t = elapsed - remainingAtLastActive
 
         if phase == .working {
-            // Work ended �?1 cycle completed. Count it.
             todayCycles += 1
             todayFocusSeconds += work
 
             if t < rest {
-                // Still inside the rest period
                 let remaining = rest - t
                 phase = .resting
                 deadline = Date().addingTimeInterval(remaining)
@@ -257,22 +259,15 @@ class TimerManager: ObservableObject {
                 scheduleNextNotifications()
                 return
             }
-            t -= rest  // rest also completed, now into next work phase
+            t -= rest
         }
-        // phase == .resting:
-        //   The rest (part of a cycle already counted in completePhase()) has ended.
-        //   t = time since rest ended = time into the NEXT work phase.
-        //   Do NOT increment todayCycles �?that was already done in completePhase().
 
-        // Shared: starting from a work phase boundary, how many cycles completed?
         if t >= work {
-            // A work cycle completed
             todayCycles += 1
             todayFocusSeconds += work
-            t -= work  // time into rest
+            t -= work
 
             if t < rest {
-                // Still in rest period of this cycle
                 let remaining = rest - t
                 phase = .resting
                 deadline = Date().addingTimeInterval(remaining)
@@ -289,24 +284,22 @@ class TimerManager: ObservableObject {
                 scheduleNextNotifications()
                 return
             }
-            t -= rest  // rest also completed, into the next work phase
+            t -= rest
             let fullCycles = Int(t / cycle)
             if fullCycles > 0 {
                 todayCycles += fullCycles
                 todayFocusSeconds += work * Double(fullCycles)
                 t -= Double(fullCycles) * cycle
             }
-            // t < cycle now, starting from a work boundary
         }
 
-        // Determine current phase (t < cycle now)
         if t < work {
             phase = .working
             timeRemaining = work - t
             totalTime = work
             showOverlay = false
-        screenFlash = false
-        showRestEndToast = false
+            screenFlash = false
+            showRestEndToast = false
         } else {
             t -= work
             phase = .resting
@@ -368,15 +361,31 @@ class TimerManager: ObservableObject {
                 self?.screenFlash = false
             }
         } else if phase == .resting {
-            // REST -> WORK
+            // REST -> WORK — check session completion
+            if todayCycles >= maxCycles {
+                // Session complete — stop and show celebration
+                phase = .idle
+                deadline = nil
+                isRunning = false
+                showOverlay = false
+                screenFlash = false
+                showRestEndToast = false
+                sessionCompleted = true
+                saveTimerState()
+                clearTimerState()
+                saveDailyStats()
+                UINotificationFeedbackGenerator().notificationOccurred(.success)
+                return
+            }
+
             let duration = TimeInterval(workMinutes * 60)
             deadline = Date().addingTimeInterval(duration)
             totalTime = duration
             timeRemaining = duration
             phase = .working
             showOverlay = false
-        screenFlash = false
-        showRestEndToast = false
+            screenFlash = false
+            showRestEndToast = false
             isRunning = true
             saveTimerState()
             scheduleNextNotifications()
@@ -396,9 +405,6 @@ class TimerManager: ObservableObject {
             .requestAuthorization(options: [.alert, .sound, .badge]) { _, _ in }
     }
 
-    /// Schedule only the NEXT pair of notifications (single cycle).
-    /// No chain �?the system fires these at the right absolute time,
-    /// and on next foreground we recalculate from lastActiveDate.
     private func scheduleNextNotifications() {
         cancelAllTimerNotifications()
 
@@ -410,19 +416,19 @@ class TimerManager: ObservableObject {
             let workRemaining = max(1, deadline.timeIntervalSince(now))
             let restDur = TimeInterval(restSeconds)
             scheduleOne(id: "eye20-rest-start",
-                        title: "该休息了�?,
-                        body: "看远�?\(restSeconds) 秒，放松眼睛",
+                        title: "该休息了",
+                        body: "看远处 \(restSeconds) 秒，放松眼睛",
                         sound: "alert.wav", after: workRemaining)
             scheduleOne(id: "eye20-rest-end",
                         title: "休息结束",
-                        body: "继续工作吧！�?\(todayCycles + 1) 轮完�?,
+                        body: "继续工作吧，第 \(todayCycles + 1) 轮完成",
                         sound: "complete.wav", after: workRemaining + restDur)
 
         case .resting:
             let restRemaining = max(1, deadline.timeIntervalSince(now))
             scheduleOne(id: "eye20-rest-end",
                         title: "休息结束",
-                        body: "继续工作吧！�?\(todayCycles) 轮完�?,
+                        body: "继续工作吧，第 \(todayCycles) 轮完成",
                         sound: "complete.wav", after: restRemaining)
 
         case .idle:
@@ -500,6 +506,9 @@ class TimerManager: ObservableObject {
         if restSeconds == 0 { restSeconds = 20 }
         darkMode = defaults.bool(forKey: "darkMode")
 
+        let savedMaxCycles = defaults.integer(forKey: "maxCycles")
+        if savedMaxCycles > 0 { maxCycles = savedMaxCycles } else { maxCycles = 3 }
+
         loadTimerState()
         loadLastActiveDate()
 
@@ -512,7 +521,6 @@ class TimerManager: ObservableObject {
                     : TimeInterval(restSeconds)
                 if isRunning { startTicking() }
             }
-            // Deadline �?0 �?handled by init() calling recoverFromBackground()
         } else {
             timeRemaining = TimeInterval(workMinutes * 60)
             totalTime = TimeInterval(workMinutes * 60)
@@ -522,11 +530,13 @@ class TimerManager: ObservableObject {
     private func saveDailyStats() {
         defaults.set(todayCycles, forKey: "cycles_\(todayKey)")
         defaults.set(todayFocusSeconds, forKey: "focus_\(todayKey)")
+        defaults.set(todayCompletedSessions, forKey: "sessions_\(todayKey)")
     }
 
     private func loadDailyStats() {
         todayCycles = defaults.integer(forKey: "cycles_\(todayKey)")
         todayFocusSeconds = defaults.double(forKey: "focus_\(todayKey)")
+        todayCompletedSessions = defaults.integer(forKey: "sessions_\(todayKey)")
     }
 
     private var todayKey: String {

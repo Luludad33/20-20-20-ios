@@ -1,4 +1,4 @@
-import SwiftUI
+﻿import SwiftUI
 
 struct ContentView: View {
     @EnvironmentObject var tm: TimerManager
@@ -28,9 +28,14 @@ struct ContentView: View {
                     .animation(.easeOut(duration: 0.4), value: tm.screenFlash)
             }
 
-            // Rest overlay
+            // Rest floating overlay
             if tm.showOverlay {
                 RestOverlayView()
+            }
+
+            // Session completed celebration
+            if tm.sessionCompleted {
+                SessionCompletedView()
             }
 
             // Rest end toast
@@ -101,8 +106,8 @@ struct TimerView: View {
                 }
             }
 
-            if tm.todayCycles > 0 {
-                Text("第 \(tm.todayCycles) 轮")
+            if tm.todayCycles > 0 && !tm.sessionCompleted {
+                Text("第 \(min(tm.todayCycles, tm.maxCycles))/\(tm.maxCycles) 轮")
                     .font(.caption)
                     .foregroundColor(.secondary)
             }
@@ -198,9 +203,11 @@ struct StatsView: View {
 
     var body: some View {
         HStack(spacing: 0) {
-            StatItem(value: "\(tm.todayCycles)", label: "今日已完成轮数")
+            StatItem(value: "\(tm.todayCycles)", label: "今日轮数")
             Divider().frame(height: 32).padding(.vertical, 8)
-            StatItem(value: "\(Int(tm.todayFocusSeconds / 60))", label: "今日专注(分钟)")
+            StatItem(value: "\(Int(tm.todayFocusSeconds / 60))", label: "专注(分钟)")
+            Divider().frame(height: 32).padding(.vertical, 8)
+            StatItem(value: "\(tm.todayCompletedSessions)", label: "完成组数")
         }
         .padding(.vertical, 14)
         .padding(.horizontal, 8)
@@ -273,6 +280,18 @@ struct SettingsToggleView: View {
                         }
                         .pickerStyle(.menu)
                     }
+
+                    SettingsRow(label: "每组轮数") {
+                        Picker("", selection: Binding(
+                            get: { tm.maxCycles },
+                            set: { tm.updateMaxCycles($0) }
+                        )) {
+                            ForEach(1..<11, id: \.self) { i in
+                                Text("\(i) 轮").tag(i)
+                            }
+                        }
+                        .pickerStyle(.menu)
+                    }
                 }
                 .padding(16)
                 .background(.regularMaterial, in: .rect(cornerRadius: 16))
@@ -296,54 +315,98 @@ struct SettingsRow<Content: View>: View {
     }
 }
 
+// MARK: - Floating Rest Overlay (replaces full-screen green)
+
 struct RestOverlayView: View {
     @EnvironmentObject var tm: TimerManager
-    @State private var opacity: Double = 0
-    @State private var scale: CGFloat = 0.8
+    @State private var appear = false
 
     var body: some View {
-        ZStack {
-            Color.green.opacity(0.95)
-                .ignoresSafeArea()
+        Color.black.opacity(0.25)
+            .ignoresSafeArea()
+            .overlay(
+                VStack(spacing: 16) {
+                    Text("🌿")
+                        .font(.system(size: 48))
 
-            VStack(spacing: 20) {
-                Text("🌿")
-                    .font(.system(size: 60))
+                    Text("休息一下")
+                        .font(.title2.weight(.bold))
 
-                Text("该休息了！")
-                    .font(.title.weight(.bold))
-                    .foregroundColor(.white)
+                    Text("\(Int(tm.timeRemaining))")
+                        .font(.system(size: 72, weight: .heavy, design: .monospaced))
+                        .foregroundColor(.green)
+                        .contentTransition(.numericText(countsDown: true))
 
-                Text("\(Int(tm.timeRemaining))")
-                    .font(.system(size: 96, weight: .heavy, design: .monospaced))
-                    .foregroundColor(.white)
-                    .scaleEffect(scale)
-                    .onAppear {
-                        withAnimation(.easeInOut(duration: 0.6).repeatForever(autoreverses: true)) {
-                            scale = 1.15
+                    Text(tm.healthTip)
+                        .font(.body)
+                        .foregroundColor(.secondary)
+                        .multilineTextAlignment(.center)
+
+                    Button("跳过休息") {
+                        withAnimation(.easeOut(duration: 0.2)) { tm.skipRest() }
+                    }
+                    .buttonStyle(.bordered)
+                    .tint(.green)
+                }
+                .padding(32)
+                .frame(maxWidth: 300)
+                .background(.regularMaterial, in: .rect(cornerRadius: 24))
+                .shadow(color: .black.opacity(0.15), radius: 20, y: 8)
+                .scaleEffect(appear ? 1 : 0.85)
+                .opacity(appear ? 1 : 0)
+            )
+            .onAppear {
+                withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
+                    appear = true
+                }
+            }
+    }
+}
+
+// MARK: - Session Completed Celebration
+
+struct SessionCompletedView: View {
+    @EnvironmentObject var tm: TimerManager
+    @State private var appear = false
+
+    var body: some View {
+        Color.black.opacity(0.3)
+            .ignoresSafeArea()
+            .overlay(
+                VStack(spacing: 16) {
+                    Text("🎉")
+                        .font(.system(size: 64))
+
+                    Text("护眼完成！")
+                        .font(.title.weight(.bold))
+
+                    Text("已完成 \(tm.maxCycles) 轮护眼")
+                        .font(.body)
+                        .foregroundColor(.secondary)
+
+                    Text("今日专注 \(Int(tm.todayFocusSeconds / 60)) 分钟")
+                        .font(.body)
+                        .foregroundColor(.secondary)
+
+                    Button("再来一轮") {
+                        withAnimation(.easeOut(duration: 0.2)) {
+                            tm.resetForNewSession()
                         }
                     }
-
-                Text(tm.healthTip)
-                    .font(.body)
-                    .foregroundColor(.white.opacity(0.9))
-                    .multilineTextAlignment(.center)
-                    .padding(.horizontal, 40)
-
-                Button("跳过休息") {
-                    withAnimation { tm.skipRest() }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.large)
                 }
-                .padding(.horizontal, 32)
-                .padding(.vertical, 12)
-                .background(.ultraThinMaterial)
-                .clipShape(.capsule)
-                .foregroundColor(.white)
-                .font(.subheadline.weight(.semibold))
+                .padding(32)
+                .frame(maxWidth: 300)
+                .background(.regularMaterial, in: .rect(cornerRadius: 24))
+                .shadow(color: .black.opacity(0.15), radius: 20, y: 8)
+                .scaleEffect(appear ? 1 : 0.85)
+                .opacity(appear ? 1 : 0)
+            )
+            .onAppear {
+                withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
+                    appear = true
+                }
             }
-        }
-        .opacity(opacity)
-        .onAppear {
-            withAnimation(.easeOut(duration: 0.15)) { opacity = 1 }
-        }
     }
 }
