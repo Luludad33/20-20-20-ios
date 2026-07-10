@@ -1,4 +1,4 @@
-name: EyeCare20
+﻿name: EyeCare20
 options:
   bundleIdPrefix: com.luludad
   deploymentTarget:
@@ -14,10 +14,27 @@ targets:
     platform: iOS
     sources:
       - "20-20-20护眼"
+    dependencies:
+      - target: EyeCareWidget
+        embed: true
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.luludad.eye20
         INFOPLIST_FILE: "20-20-20护眼/Info.plist"
+        DEVELOPMENT_TEAM: ""
+        CODE_SIGN_STYLE: Automatic
+        CODE_SIGN_IDENTITY: "Apple Development"
+
+  EyeCareWidget:
+    type: app-extension
+    platform: iOS
+    sources:
+      - EyeCareWidget
+      - path: "20-20-20护眼/EyeCareAttributes.swift"
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.luludad.eye20.eye20widget
+        INFOPLIST_FILE: EyeCareWidget/Info.plist
         DEVELOPMENT_TEAM: ""
         CODE_SIGN_STYLE: Automatic
         CODE_SIGN_IDENTITY: "Apple Development"

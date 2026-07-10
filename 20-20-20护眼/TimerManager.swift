@@ -113,12 +113,14 @@ class TimerManager: ObservableObject {
         saveTimerState()
         scheduleNextNotifications()
         startTicking()
+        updateLiveActivity()
     }
 
     func pause() {
         guard phase != .idle else { return }
         isRunning = false
         stopTicking()
+        updateLiveActivity()
         saveTimerState()
         cancelAllTimerNotifications()
     }
@@ -130,10 +132,12 @@ class TimerManager: ObservableObject {
         saveTimerState()
         scheduleNextNotifications()
         startTicking()
+        updateLiveActivity()
     }
 
     func reset() {
         stopTicking()
+        endLiveActivity()
         deadline = nil
         phase = .idle
         timeRemaining = TimeInterval(workMinutes * 60)
@@ -166,6 +170,7 @@ class TimerManager: ObservableObject {
         scheduleNextNotifications()
         startTicking()
         showRestEndToast = true
+        updateLiveActivity()
         UINotificationFeedbackGenerator().notificationOccurred(.success)
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
             self?.showRestEndToast = false
@@ -197,6 +202,7 @@ class TimerManager: ObservableObject {
         todayCompletedSessions += 1
         todayCycles = 0
         todayFocusSeconds = 0
+        endLiveActivity()
         sessionCompleted = false
         saveDailyStats()
         reset()
@@ -204,6 +210,22 @@ class TimerManager: ObservableObject {
 
     var currentWorkMinutes: Int { workMinutes }
     var currentRestSeconds: Int { restSeconds }
+
+    // MARK: - Live Activity
+
+    private func updateLiveActivity() {
+        EyeCareLiveActivityManager.shared.startOrUpdate(
+            phase: phase.rawValue,
+            timeRemaining: Int(timeRemaining),
+            cycleNumber: min(todayCycles, maxCycles),
+            maxCycles: maxCycles,
+            focusMinutes: Int(todayFocusSeconds / 60)
+        )
+    }
+
+    private func endLiveActivity() {
+        EyeCareLiveActivityManager.shared.end()
+    }
 
     // MARK: - Background recovery
 
@@ -355,6 +377,7 @@ class TimerManager: ObservableObject {
             saveTimerState()
             scheduleNextNotifications()
             startTicking()
+            updateLiveActivity()
             screenFlash = true
             UINotificationFeedbackGenerator().notificationOccurred(.warning)
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in
@@ -371,6 +394,7 @@ class TimerManager: ObservableObject {
                 screenFlash = false
                 showRestEndToast = false
                 sessionCompleted = true
+                endLiveActivity()
                 saveTimerState()
                 clearTimerState()
                 saveDailyStats()
@@ -390,6 +414,7 @@ class TimerManager: ObservableObject {
             saveTimerState()
             scheduleNextNotifications()
             startTicking()
+            updateLiveActivity()
             showRestEndToast = true
             UINotificationFeedbackGenerator().notificationOccurred(.success)
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
