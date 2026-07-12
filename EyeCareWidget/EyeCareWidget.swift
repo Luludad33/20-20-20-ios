@@ -3,7 +3,6 @@ import SwiftUI
 import ActivityKit
 
 @main
-@main
 struct EyeCareWidget: Widget {
     var body: some WidgetConfiguration {
         ActivityConfiguration(for: EyeCareAttributes.self) { context in
