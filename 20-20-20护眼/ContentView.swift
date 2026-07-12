@@ -1,4 +1,27 @@
 ﻿import SwiftUI
+}
+    }
+
+struct RestPromptView: View {
+    @EnvironmentObject var tm: TimerManager
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "bell.fill")
+                .foregroundColor(.orange)
+            Text("该休息了！点击下方按钮开始休息")
+                .font(.subheadline)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+        .background(.orange.opacity(0.12))
+        .clipShape(.rect(cornerRadius: 10))
+        .padding(.horizontal, 24)
+        .transition(.opacity.combined(with: .move(edge: .top)))
+    }
+}
+}
+import SwiftUI
 
 struct ContentView: View {
     @EnvironmentObject var tm: TimerManager
@@ -15,6 +38,9 @@ struct ContentView: View {
                 Spacer()
                 ControlsView()
                 StatsView()
+                if tm.restPending {
+                    RestPromptView()
+                }
                 Spacer().frame(height: 8)
                 SettingsToggleView()
             }
@@ -181,7 +207,7 @@ struct ControlsView: View {
 
     private var mainLabel: String {
         switch tm.phase {
-        case .idle: return "开始"
+        case .idle: return tm.restPending ? "开始休息" : "开始"
         case .working: return tm.isRunning ? "暂停" : "继续"
         case .resting: return "跳过休息"
         }
@@ -189,7 +215,7 @@ struct ControlsView: View {
 
     private func mainAction() {
         switch tm.phase {
-        case .idle: tm.startWorking()
+        case .idle: if tm.restPending { tm.startRestManually() } else { tm.startWorking() }
         case .working:
             if tm.isRunning { tm.pause() }
             else { tm.resume() }

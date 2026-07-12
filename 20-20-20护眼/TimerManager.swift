@@ -25,6 +25,7 @@ class TimerManager: ObservableObject {
     @Published var sessionCompleted = false
     @Published var maxCycles: Int = 3 { didSet { defaults.set(maxCycles, forKey: "maxCycles") } }
     @Published var todayCompletedSessions = 0
+    @Published var restPending = false
 
     var progress: Double {
         totalTime > 0 ? (timeRemaining / totalTime) : 1.0
@@ -64,6 +65,7 @@ class TimerManager: ObservableObject {
     func handleScenePhaseChange(to newPhase: ScenePhase) {
         switch newPhase {
         case .active:
+            if restPending { startRestManually(); return }
             loadDailyStats()
             if phase != .idle {
                 if let deadline, deadline < Date() {
@@ -99,6 +101,7 @@ class TimerManager: ObservableObject {
 
     func startWorking() {
         sessionCompleted = false
+        restPending = false
         let duration = TimeInterval(workMinutes * 60)
         deadline = Date().addingTimeInterval(duration)
         totalTime = duration
@@ -227,6 +230,30 @@ class TimerManager: ObservableObject {
         EyeCareLiveActivityManager.shared.end()
     }
 
+
+    // MARK: - Manual Rest
+
+    /// Called when user taps notification or taps "start rest" button
+    func startRestManually() {
+        restPending = false
+        let duration = TimeInterval(restSeconds)
+        deadline = Date().addingTimeInterval(duration)
+        totalTime = duration
+        timeRemaining = duration
+        phase = .resting
+        isRunning = true
+        showOverlay = true
+        healthTip = healthTips.randomElement() ?? ""
+        saveTimerState()
+        scheduleNextNotifications()
+        startTicking()
+        updateLiveActivity()
+        screenFlash = true
+        UINotificationFeedbackGenerator().notificationOccurred(.warning)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in
+            self?.screenFlash = false
+        }
+    }
     // MARK: - Background recovery
 
     private func recoverFromBackground() {
@@ -362,28 +389,24 @@ class TimerManager: ObservableObject {
 
     private func completePhase() {
         if phase == .working {
-            // WORK -> REST
+            // WORK -> REST (manual mode: wait for user tap)
             todayCycles += 1
             todayFocusSeconds += TimeInterval(workMinutes * 60)
-            let duration = TimeInterval(restSeconds)
-            deadline = Date().addingTimeInterval(duration)
-            totalTime = duration
-            timeRemaining = duration
-            phase = .resting
-            showOverlay = true
-            healthTip = healthTips.randomElement() ?? ""
-            isRunning = true
+            stopTicking()
+            deadline = nil
+            phase = .idle
+            isRunning = false
+            showOverlay = false
+            screenFlash = false
+            restPending = true
             saveDailyStats()
             saveTimerState()
-            scheduleNextNotifications()
-            startTicking()
-            updateLiveActivity()
-            screenFlash = true
+            clearTimerState()
+            scheduleOne(id: "eye20-rest-start",
+                        title: "\u8BE5\u4F11\u606F\u4E86",
+                        body: "\u770B\u5411\u8FDC\u5904 \(restSeconds) \u79D2\uFF0C\u653E\u677E\u773C\u775B",
+                        sound: "alert.wav", after: 0.5)
             UINotificationFeedbackGenerator().notificationOccurred(.warning)
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in
-                self?.screenFlash = false
-            }
-        } else if phase == .resting {
             // REST -> WORK — check session completion
             if todayCycles >= maxCycles {
                 // Session complete — stop and show celebration
