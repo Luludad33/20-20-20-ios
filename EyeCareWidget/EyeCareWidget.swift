@@ -1,4 +1,4 @@
-﻿import WidgetKit
+import WidgetKit
 import SwiftUI
 import ActivityKit
 
