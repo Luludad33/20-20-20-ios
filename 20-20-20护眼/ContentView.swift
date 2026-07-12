@@ -1,6 +1,4 @@
 import SwiftUI
-}
-    }
 
 struct RestPromptView: View {
     @EnvironmentObject var tm: TimerManager
@@ -20,8 +18,6 @@ struct RestPromptView: View {
         .transition(.opacity.combined(with: .move(edge: .top)))
     }
 }
-}
-import SwiftUI
 
 struct ContentView: View {
     @EnvironmentObject var tm: TimerManager
