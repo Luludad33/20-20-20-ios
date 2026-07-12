@@ -403,10 +403,11 @@ class TimerManager: ObservableObject {
             saveTimerState()
             clearTimerState()
             scheduleOne(id: "eye20-rest-start",
-                        title: "\u8BE5\u4F11\u606F\u4E86",
-                        body: "\u770B\u5411\u8FDC\u5904 \(restSeconds) \u79D2\uFF0C\u653E\u677E\u773C\u775B",
+                        title: "该休息了",
+                        body: "看向远处 \(restSeconds) 秒，放松眼睛",
                         sound: "alert.wav", after: 0.5)
             UINotificationFeedbackGenerator().notificationOccurred(.warning)
+        } else if phase == .resting {
             // REST -> WORK — check session completion
             if todayCycles >= maxCycles {
                 // Session complete — stop and show celebration
@@ -445,7 +446,6 @@ class TimerManager: ObservableObject {
             }
         }
     }
-
     // MARK: - Notifications
 
     private func requestNotificationPermission() {
@@ -468,14 +468,14 @@ class TimerManager: ObservableObject {
                         body: "看远处 \(restSeconds) 秒，放松眼睛",
                         sound: "alert.wav", after: workRemaining)
             scheduleOne(id: "eye20-rest-end",
-                        title: "休息结束",
+                        title: "该休息了",
                         body: "继续工作吧，第 \(todayCycles + 1) 轮完成",
                         sound: "complete.wav", after: workRemaining + restDur)
 
         case .resting:
             let restRemaining = max(1, deadline.timeIntervalSince(now))
             scheduleOne(id: "eye20-rest-end",
-                        title: "休息结束",
+                        title: "该休息了",
                         body: "继续工作吧，第 \(todayCycles) 轮完成",
                         sound: "complete.wav", after: restRemaining)
 
