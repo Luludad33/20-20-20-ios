@@ -25,7 +25,7 @@ class TimerManager: ObservableObject {
     @Published var sessionCompleted = false
     @Published var maxCycles: Int = 3 { didSet { defaults.set(maxCycles, forKey: "maxCycles") } }
     @Published var todayCompletedSessions = 0
-    @Published var restPending = false
+    @Published var restPending = false { didSet { defaults.set(restPending, forKey: "restPending") } }
 
     var progress: Double {
         totalTime > 0 ? (timeRemaining / totalTime) : 1.0
@@ -150,6 +150,7 @@ class TimerManager: ObservableObject {
         screenFlash = false
         showRestEndToast = false
         sessionCompleted = false
+        restPending = false
         lastActiveDate = Date()
         saveLastActiveDate()
         cancelAllTimerNotifications()
@@ -400,7 +401,6 @@ class TimerManager: ObservableObject {
             screenFlash = false
             restPending = true
             saveDailyStats()
-            saveTimerState()
             clearTimerState()
             scheduleOne(id: "eye20-rest-start",
                         title: "该休息了",
@@ -419,7 +419,6 @@ class TimerManager: ObservableObject {
                 showRestEndToast = false
                 sessionCompleted = true
                 endLiveActivity()
-                saveTimerState()
                 clearTimerState()
                 saveDailyStats()
                 UINotificationFeedbackGenerator().notificationOccurred(.success)
@@ -468,14 +467,14 @@ class TimerManager: ObservableObject {
                         body: "看远处 \(restSeconds) 秒，放松眼睛",
                         sound: "alert.wav", after: workRemaining)
             scheduleOne(id: "eye20-rest-end",
-                        title: "该休息了",
+                        title: "休息结束",
                         body: "继续工作吧，第 \(todayCycles + 1) 轮完成",
                         sound: "complete.wav", after: workRemaining + restDur)
 
         case .resting:
             let restRemaining = max(1, deadline.timeIntervalSince(now))
             scheduleOne(id: "eye20-rest-end",
-                        title: "该休息了",
+                        title: "休息结束",
                         body: "继续工作吧，第 \(todayCycles) 轮完成",
                         sound: "complete.wav", after: restRemaining)
 
@@ -559,6 +558,7 @@ class TimerManager: ObservableObject {
 
         loadTimerState()
         loadLastActiveDate()
+        restPending = defaults.bool(forKey: "restPending")
 
         if phase != .idle, let deadline {
             let remaining = deadline.timeIntervalSince(Date())
