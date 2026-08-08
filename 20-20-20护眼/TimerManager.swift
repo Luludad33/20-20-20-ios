@@ -293,20 +293,11 @@ class TimerManager: ObservableObject {
             todayFocusSeconds += work
 
             if t < rest {
-                let remaining = rest - t
-                phase = .resting
-                deadline = Date().addingTimeInterval(remaining)
-                timeRemaining = remaining
-                totalTime = rest
-                showOverlay = true
-                healthTip = healthTips.randomElement() ?? ""
-                isRunning = true
-                saveTimerState()
+                // 进入休息：用户回到主界面后才开始计时，休息时间从此刻完整开始
+                startRestManually()
                 saveDailyStats()
                 lastActiveDate = Date()
                 saveLastActiveDate()
-                startTicking()
-                scheduleNextNotifications()
                 return
             }
             t -= rest
@@ -318,20 +309,11 @@ class TimerManager: ObservableObject {
             t -= work
 
             if t < rest {
-                let remaining = rest - t
-                phase = .resting
-                deadline = Date().addingTimeInterval(remaining)
-                timeRemaining = remaining
-                totalTime = rest
-                showOverlay = true
-                healthTip = healthTips.randomElement() ?? ""
-                isRunning = true
-                saveTimerState()
+                // 进入休息：用户回到主界面后才开始计时，休息时间从此刻完整开始
+                startRestManually()
                 saveDailyStats()
                 lastActiveDate = Date()
                 saveLastActiveDate()
-                startTicking()
-                scheduleNextNotifications()
                 return
             }
             t -= rest
@@ -352,11 +334,12 @@ class TimerManager: ObservableObject {
             showRestEndToast = false
         } else {
             t -= work
-            phase = .resting
-            timeRemaining = rest - t
-            totalTime = rest
-            showOverlay = true
-            healthTip = healthTips.randomElement() ?? ""
+            // 进入休息：用户回到主界面后才开始计时，休息时间从此刻完整开始
+            startRestManually()
+            saveDailyStats()
+            lastActiveDate = Date()
+            saveLastActiveDate()
+            return
         }
 
         deadline = Date().addingTimeInterval(timeRemaining)
